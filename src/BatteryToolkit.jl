@@ -9,8 +9,9 @@ include("ParameterSets/Base.jl")
 include("helpers.jl")
 include("ParameterSets/Chen2020.jl")
 include("ParameterSets/OKane2022.jl")
+include("ParameterSets/Ruihe2025.jl")
 
-export Chen2020, OKane2022, BatteryParameters
+export Chen2020, OKane2022, Ruihe2025, BatteryParameters
 
 include("CellModels/SPMe/SPMe.jl")
 

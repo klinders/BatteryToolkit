@@ -24,7 +24,10 @@ Use this when SEI growth effects are negligible or you want to exclude them from
 - `j_sei`: SEI current density (always 0)
 - `ϕf`: Film potential (always 0)
 """
-function NoSEI(; name, p::BatteryToolkit.SideReactionParameters, s::BatteryToolkit.SolidParticleParameters, g)
+function NoSEI(; name, params::BatteryParameters, g, Domain)
+    
+    domain = lowercase(Domain)
+    Dmn = split(Domain, " ")[1]  # Extract 'Positive' or 'Negative' for parameter access
     
     @parameters begin
         t
@@ -37,7 +40,7 @@ function NoSEI(; name, p::BatteryToolkit.SideReactionParameters, s::BatteryToolk
     @named J = RealInput()
     @named T = RealInput()
     @named Δϕₛ = RealInputArray(nin=N)
-    @named aₖ = RealInput(guess=s.aₖ)
+    @named aₖ = RealInput(guess=3*params["$(Domain) active material volume fraction"]/params["$(Dmn) particle radius [m]"])
 
     # Time derivative operator
     Dt = Differential(t)
@@ -55,7 +58,7 @@ function NoSEI(; name, p::BatteryToolkit.SideReactionParameters, s::BatteryToolk
         ϕf_x(t)
     end
 
-    η_sei = [Δϕₛ.u[i] - p.U - ϕf[i] for i in 1:N]
+    η_sei = [Δϕₛ.u[i] - params["SEI open-circuit potential [V]"] - ϕf[i] for i in 1:N]
     
     eqns = [
         # Scott Marquis thesis (eq. 5.92)
@@ -63,9 +66,9 @@ function NoSEI(; name, p::BatteryToolkit.SideReactionParameters, s::BatteryToolk
         [j_sei[i] ~ 0 for i in 1:N]...,
 
         [Dt(c_sei[i]) ~ 0 for i in 1:N]...,
-        [L_sei[i] ~ c_sei[i]*p.V̄/aₖ.u for i in 1:N]...,
+        [L_sei[i] ~ c_sei[i]*params["SEI partial molar volume [m3.mol-1]"]/aₖ.u for i in 1:N]...,
 
-        [ϕf[i] ~ J.u*L_sei[i]*p.R for i in 1:N]...,
+        [ϕf[i] ~ J.u*L_sei[i]*params["SEI resistivity [Ohm.m]"] for i in 1:N]...,
         L_sei_x ~ sum(L_sei)/N,
         c_sei_x ~ sum(c_sei)/N,
         j_sei_x ~ sum(j_sei)/N,
@@ -106,8 +109,11 @@ The SEI current density follows Butler-Volmer kinetics. Use when SEI growth is f
 # Physical Assumption
 Reaction rate dominates over diffusion; film acts as perfect ionic conductor.
 """
-function ReactionLimitedSEI(; name, p::BatteryToolkit.SideReactionParameters, s::BatteryToolkit.SolidParticleParameters, g)
+function ReactionLimitedSEI(; name, params::BatteryParameters, g, Domain)
     
+    domain = lowercase(Domain)
+    Dmn = split(Domain, " ")[1]  # Extract 'Positive' or 'Negative' for parameter access
+
     @parameters begin
         t
     end
@@ -119,7 +125,7 @@ function ReactionLimitedSEI(; name, p::BatteryToolkit.SideReactionParameters, s:
     @named J = RealInput()
     @named T = RealInput()
     @named Δϕₛ = RealInputArray(nin=N)
-    @named aₖ = RealInput(guess=s.aₖ)
+    @named aₖ = RealInput(guess=3*params["$(Domain) active material volume fraction"]/params["$(Dmn) particle radius [m]"])
 
     # Time derivative operator
     Dt = Differential(t)
@@ -138,23 +144,23 @@ function ReactionLimitedSEI(; name, p::BatteryToolkit.SideReactionParameters, s:
         Q_sei(t)
     end
 
-    η_sei = [Δϕₛ.u[i] - p.U - ϕf[i] for i in 1:N]
-    c_sei₀ = p.Lf₀/p.V̄*s.aₖ
+    η_sei = [Δϕₛ.u[i] - params["SEI open-circuit potential [V]"] - ϕf[i] for i in 1:N]
+    c_sei₀ = params["Initial SEI thickness [m]"]/params["SEI partial molar volume [m3.mol-1]"]*3*params["$(Domain) active material volume fraction"]/params["$(Dmn) particle radius [m]"]
 
     eqns = [
         # Scott Marquis thesis (eq. 5.92)
         # Exchange current density
-        [j_sei[i] ~ -p.j_sei₀*exp(-p.α*F/R/T.u*η_sei[i]) for i in 1:N]...,
+        [j_sei[i] ~ -params["SEI reaction exchange current density [A.m-2]"]*exp(-params["SEI transfer coefficient"]*F/R/T.u*η_sei[i]) for i in 1:N]...,
 
-        [Dt(c_sei[i]) ~ -aₖ.u*j_sei[i]/(F*p.z) for i in 1:N]...,
-        [L_sei[i] ~ c_sei[i]*p.V̄/aₖ.u for i in 1:N]...,
+        [Dt(c_sei[i]) ~ -aₖ.u*j_sei[i]/(F*params["Ratio of lithium moles to SEI moles"]) for i in 1:N]...,
+        [L_sei[i] ~ c_sei[i]*params["SEI partial molar volume [m3.mol-1]"]/aₖ.u for i in 1:N]...,
 
-        [ϕf[i] ~ J.u*L_sei[i]*p.R for i in 1:N]...,
+        [ϕf[i] ~ J.u*L_sei[i]*params["SEI resistivity [Ohm.m]"] for i in 1:N]...,
         L_sei_x ~ sum(L_sei)/N,
         c_sei_x ~ sum(c_sei)/N,
         j_sei_x ~ sum(j_sei)/N,
         ϕf_x ~ sum(ϕf)/N,
-        Q_sei ~ (c_sei_x-c_sei₀)*p.V̄*p.z*F/3600,
+        Q_sei ~ (c_sei_x-c_sei₀)*params["SEI partial molar volume [m3.mol-1]"]*params["Ratio of lithium moles to SEI moles"]*F/3600,
     ]
 
     System(eqns,t; name=name,systems=[J, T, Δϕₛ, aₖ])

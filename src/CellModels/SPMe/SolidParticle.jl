@@ -26,7 +26,9 @@ volume method. Computes surface concentration, stoichiometry, and open-circuit p
 # Notes
 Uses second-order accurate finite volume discretization with ghost nodes for boundary conditions.
 """
-function SolidParticle(; name, p::SolidParticleParameters, g)
+function SolidParticle(; name, params::BatteryParameters, g, Domain)
+    
+    @assert domain in ["positive electrode", "negative electrode"] "Domain must be either 'positive electrode' or 'negative electrode'"
     
     @parameters begin
         t
@@ -40,10 +42,12 @@ function SolidParticle(; name, p::SolidParticleParameters, g)
 
     # Time derivative operator
     Dt = Differential(t)
+    domain = lowercase(Domain)
+    Dmn = split(Domain, " ")[1]  # Extract 'Positive' or 'Negative' for parameter access
 
     @variables begin
         # I am adding two ghost nodes for the boundary conditions
-        (c(t))[1:g.Nᵣ] = fill(p.c₀,g.Nᵣ)
+        (c(t))[1:g.Nᵣ] = fill(params["Initial concentration in $(domain) [mol.m-3]"],g.Nᵣ)
         (D(t))[1:g.Nᵣ]
         (σ(t))[1:g.Nᵣ]
         D_r(t)
@@ -53,32 +57,36 @@ function SolidParticle(; name, p::SolidParticleParameters, g)
         U₀(t)
         z(t)
         ϕ̄ₛ(t)
-        ϵₛ(t) = p.ϵₛ # active material volume fraction
+        ϵₛ(t) = params["$(Domain) active material volume fraction"] # active material volume fraction
         aₖ(t) # specific surface area
     end
 
     # Discretized equations
     Δr,r,Vᵢ,Aₗ,Aᵣ = g.Δr, g.r, g.Vᵢ, g.Aₗ, g.Aᵣ
 
-    θ_M = p.Ω/ (R * T.u) * (2 * p.Ω * p.E) / (9 * (1 - p.ν))
+    Ω = params["$(Domain) partial molar volume [m3.mol-1]"]
+    ν = params["$(Domain) Poisson's ratio"]
+    E = params["$(Domain) Young's modulus [Pa]"]
+
+    θ_M = Ω / (R * T.u) * (2 * Ω * E) / (9 * (1 - ν))
     c₀_cr = 0.0
 
-    D_f = [p.Dₖ(c[i], T.u) for i in 1:g.Nᵣ] # Diffusivities at cell centers
+    D_f = [params["$(Domain) diffusivity [m2.s-1]"](c[i], T.u) for i in 1:g.Nᵣ] # Diffusivities at cell centers
     Dₗ = [nothing; [D_face(D[i-1],D[i],Δr,Δr) for i in 2:g.Nᵣ]] # Left diffusivities
     Dᵣ = [[D_face(D[i], D[i+1],Δr,Δr) for i in 1:g.Nᵣ-1]; nothing] # Right diffusivities
 
     eqns = [
         # Diffusion with stress
         [σ[i] ~ 1 + θ_M * (c[i] - c₀_cr) for i in 1:g.Nᵣ]...
-        [D[i] ~ p.Dₖ(c[i], T.u)*σ[i] for i in 1:g.Nᵣ]...
+        [D[i] ~ params["$(Domain) diffusivity [m2.s-1]"](c[i], T.u)*σ[i] for i in 1:g.Nᵣ]...
         D_r ~ sum([D[i]*Vᵢ[i] for i in 1:g.Nᵣ])/sum(Vᵢ)
         
         c_avr ~ sum(c)/g.Nᵣ
         c_r ~ sum([c[i]*Vᵢ[i] for i in 1:g.Nᵣ])/sum(Vᵢ)
         c_surf ~ 1.5*c[end] - 0.5*c[end-1] # Surface concentration
-        z ~ c_surf/p.c₊ # Stoichiometry
-        U₀ ~ p.Uₖ(z) # Open-circuit potential
-        aₖ ~ 3*ϵₛ/p.Rₖ # Specific surface area
+        z ~ c_surf/params["Maximum concentration in $(domain) [mol.m-3]"] # Stoichiometry
+        U₀ ~ params["$(Domain) OCP [V]"](z) # Open-circuit potential
+        aₖ ~ 3*ϵₛ/params["$(Dmn) particle radius [m]"] # Specific surface area
 
         # Boundary condition center
         Dt(c[1]) ~ (Dᵣ[1]*Aᵣ[1]*(c[2] - c[1])/Δr)/Vᵢ[1]
@@ -95,8 +103,8 @@ function SolidParticle(; name, p::SolidParticleParameters, g)
     # Event working
     events = [
         [
-            c_surf ~ 0.01*p.c₊,
-            c_surf ~ 0.99*p.c₊,
+            c_surf ~ 0.01*params["Maximum concentration in $(domain) [mol.m-3]"],
+            c_surf ~ 0.99*params["Maximum concentration in $(domain) [mol.m-3]"],
         ]=>(abort!,(;))
     ]
 

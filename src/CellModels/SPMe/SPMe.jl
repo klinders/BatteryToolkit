@@ -33,48 +33,53 @@ The SPMe model implemented based on [MarquisEtAl2019](@citet) and [BrosaPlanella
 function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,10,10], :Nᵣ=>[10,10]), side_reactions=true)
     @parameters begin
         t # Time variable
-        k_sei = 2.76e-18
-        D_ec = 1.75e-19
-        α = 0.5
-        # D_sol = 2.5e-22
     end
     Dt = Differential(t)
 
     g = build_fvm_geometry(params, N)
     
     if Q==0
-        Q = params.Q₀
+        Q = params["Nominal cell capacity [A.h]"]
     end
 
     Nn = length(g.el.ixₙ)
     Np = length(g.el.ixₚ)
 
     # Scale the current density to the electrode area
-    A = params.Hcc*params.Wcc*params.n_el*(Q/params.Q₀)
-    
+    A = params["Electrode height [m]"]*params["Electrode width [m]"]*params["Number of electrodes connected in parallel to make a cell"]*(Q/params["Nominal cell capacity [A.h]"])
+    params["Current collector area [m2]"] = A
+
     # Electrical ports
     @named p = Pin()
     @named n = Pin()
     @named T = RealInput(guess=298.15)
 
     # @named Q = RealOutput()
-    @named pe = SolidParticle(p=params.p, g=g.pe)
-    @named ne = SolidParticle(p=params.n, g=g.ne)
-    @named el = Electrolyte(p=params.e, g=g.el)
-    @named sei = SEI.ECReactionLimitedSEI(p=params.n.side_reactions[1],s=params.n, V=params.e.Lₙ*A, g=g) # Assuming first side reaction is SEI
-    @named plating = LithiumPlating.PartiallyReversiblePlating(p=params.n.side_reactions[1],s=params.n, V=params.e.Lₙ*A, g=g) 
-    @named cracking_n = ParticleCracking.SwellingAndCracking(p=params.n.side_reactions[1], s=params.n, V=params.e.Lₙ*A, g=g)
-    @named cracking_p = ParticleCracking.SwellingOnly(p=params.n.side_reactions[1], s=params.p, V=params.e.Lₚ*A, g=g)
+    @named pe = SolidParticle(params, g, d="Positive electrode")
+    @named ne = SolidParticle(params, g, d="Negative electrode")
+    @named el = Electrolyte(params, g, d=["Negative electrode", "Separator", "Positive electrode"])
+    @named sei = SEI.ECReactionLimitedSEI(params, g, d="Negative electrode")
+    @named plating = LithiumPlating.PartiallyReversiblePlating(params, g, d="Negative electrode")
+    @named cracking_n = ParticleCracking.SwellingAndCracking(params, g, d="Negative electrode")
+    @named cracking_p = ParticleCracking.SwellingOnly(params, g, d="Positive electrode")
 
-    @named lam_n = LAM.StressDriven(p=params.n.side_reactions[1], s=params.n, V=params.e.Lₙ*A, g=g)
-    @named lam_p = LAM.StressDriven(p=params.n.side_reactions[1], s=params.p, V=params.e.Lₚ*A, g=g)
-    @named cathode_diss = CathodeDissolution.DiffusionCurrent(s=params.p, V=params.e.Lₚ*A, g=g)
+    @named lam_n = LAM.StressDriven(params. g, d="Negative electrode")
+    @named lam_p = LAM.StressDriven(params, g, d="Positive electrode")
+    @named cathode_diss = CathodeDissolution.DiffusionCurrent(params, g, d="Positive electrode")
 
     submodels = [p,n,T,pe,ne,el,sei,plating,cracking_n,cracking_p,lam_n,lam_p,cathode_diss]
     
+    cₚ0 = params["Initial concentration in positive electrode [mol.m-3]"]
+    cₙ0 = params["Initial concentration in negative electrode [mol.m-3]"]
+    cₙ₊ = params["Maximum concentration in negative electrode [mol.m-3]"]
+    cₚ₊ = params["Maximum concentration in positive electrode [mol.m-3]"]
+
+    Up_init = params["Positive electrode OCP [V]"](cₚ0/cₚ₊)
+    Un_init = params["Negative electrode OCP [V]"](cₙ0/cₙ₊)
+
     @variables begin
         # Terminal voltage and current
-        v(t), [guess=params.p.Uₖ(params.p.c₀/params.p.c₊) - params.n.Uₖ(params.n.c₀/params.n.c₊)]
+        v(t), [guess=Up_init - Un_init]
         i(t)
         soc(t)
 
@@ -85,8 +90,8 @@ function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,1
         (ηₙ(t))[1:Nn]
         (ηₚ(t))[1:Np]
         Δϕₛ(t), [guess=0]
-        (Δϕₙ(t))[1:Nn], [guess=fill(params.n.Uₖ(params.n.c₀/params.n.c₊), Nn)]
-        (Δϕₚ(t))[1:Np], [guess=fill(params.p.Uₖ(params.p.c₀/params.p.c₊), Np)]
+        (Δϕₙ(t))[1:Nn], [guess=fill(Un_init, Nn)]
+        (Δϕₚ(t))[1:Np], [guess=fill(Up_init, Np)]
 
         # Δϕf(t)
         Δϕₙ_x(t)
@@ -123,29 +128,31 @@ function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,1
 
     # X-average
     x = g.el.x_centers
-    L = sum(g.el.Ls)
+    Lₙ = params["Negative electrode thickness [m]"]
+    Lₚ = params["Positive electrode thickness [m]"]
+    Lₛ = params["Separator thickness [m]"]
+    L = Lₙ + Lₛ + Lₚ
+
+    σₙ = params["Negative electrode conductivity [S.m-1]"]
+    σₚ = params["Positive electrode conductivity [S.m-1]"]
+
     # Exchange current densities
 
     ## Reaction overpotentials ##
 
     R = 8.314 # Universal gas constant
     F = 96485 # Faraday's constant
-    # jₙ0 = [params.n.mₖ*sqrt(el.cₑ[i]*cₛ[i]*(params.n.c₊-cₛ[i])) for i in g.el.ixₙ]
-    # jₚ0 = [params.p.mₖ*sqrt(el.cₑ[i]*cₛ[i]*(params.p.c₊-cₛ[i])) for i in g.el.ixₚ]
-
-    # asin_n = [asinh(ne.J.u/params.n.aₖ/jₙ0[i]) for i in 1:Nn]
-    # asin_p = [asinh(pe.J.u/params.p.aₖ/jₚ0[i]) for i in 1:Np]
     
     # Overpotentials from the inverse Butler-Volmer equation
-    ηᵣn = [2*R*T.u/F*asinh((i_app/params.e.Lₙ/ne.aₖ)/(2*jₙ0[i])) for i in 1:Nn]
-    ηᵣp = [2*R*T.u/F*asinh((-i_app/params.e.Lₚ/pe.aₖ)/(2*jₚ0[i])) for i in 1:Np]
+    ηᵣn = [2*R*T.u/F*asinh((i_app/Lₙ/ne.aₖ)/(2*jₙ0[i])) for i in 1:Nn]
+    ηᵣp = [2*R*T.u/F*asinh((-i_app/Lₚ/pe.aₖ)/(2*jₚ0[i])) for i in 1:Np]
 
     # ηᵣ_n = ηᵣ_x(params.n, cₙ, el.cₑ[g.el.ixₙ], ne.T.u, ne.J.u)
     # ηᵣ_p = ηᵣ_x(params.p, cₚ, el.cₑ[g.el.ixₚ], pe.T.u, pe.J.u)
 
     # X-average of the electrolyte potential
-    ϕₛ_n = [i_app*(x[i] - 2*params.e.Lₙ)*x[i]/2/params.n.σₖ/params.e.Lₙ for i in g.el.ixₙ]
-    ϕₛ_p = [i_app*(x[i] + (x[i] - L)^2/(2*params.e.Lₚ))/params.p.σₖ for i in g.el.ixₚ]
+    ϕₛ_n = [i_app*(x[i] - 2*Lₙ)*x[i]/2/σₙ/Lₙ for i in g.el.ixₙ]
+    ϕₛ_p = [i_app*(x[i] + (x[i] - L)^2/(2*Lₚ))/σₚ for i in g.el.ixₚ]
 
     eqns = [
         # Temps
@@ -155,7 +162,7 @@ function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,1
         soc ~ ne.z,
 
         # temp
-        aj_tot_ne ~ i_app/params.e.Lₙ,
+        aj_tot_ne ~ i_app/Lₙ,
         j_tot_ne ~ aj_tot_ne/ne.aₖ,
 
         ## Potentials ##
@@ -163,11 +170,11 @@ function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,1
         ηᵣ̅n ~ sum(ηᵣn)/Nn,
         ηᵣ̅p ~ sum(ηᵣp)/Np,
         ηᵣ ~ ηᵣ̅p - ηᵣ̅n,
-        Δϕₛ ~ -i_app/3*(params.e.Lₚ/params.p.σₖ + params.e.Lₙ/params.n.σₖ),
+        Δϕₛ ~ -i_app/3*(Lₚ/σₚ + Lₙ/σₙ),
 
         # Exchange current densities
-        [jₙ0[i] ~ params.n.j0(el.cₑ[g.el.ixₙ[i]], ne.c_surf, params.n.c₊, T.u) for i in 1:Nn]...,
-        [jₚ0[i] ~ params.p.j0(el.cₑ[g.el.ixₚ[i]], pe.c_surf, params.p.c₊, T.u) for i in 1:Np]...,
+        [jₙ0[i] ~ params["Negative electrode exchange current density [A.m-2]"](el.cₑ[g.el.ixₙ[i]], ne.c_surf, params["Maximum concentration in negative electrode [mol.m-3]"], T.u) for i in 1:Nn]...,
+        [jₚ0[i] ~ params["Positive electrode exchange current density [A.m-2]"](el.cₑ[g.el.ixₚ[i]], pe.c_surf, params["Maximum concentration in positive electrode [mol.m-3]"], T.u) for i in 1:Np]...,
         j̄ₙ0 ~ sum(jₙ0)/Nn,
         j̄ₚ0 ~ sum(jₚ0)/Np,
 
@@ -191,14 +198,14 @@ function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,1
 
         # Electrolyte current density
         el.i_app.u ~ i_app,
-        el.j_n.u ~ i_app/params.e.Lₙ,
-        el.j_p.u ~ -i_app/params.e.Lₚ,
+        el.j_n.u ~ i_app/Lₙ,
+        el.j_p.u ~ -i_app/Lₚ,
         # el.jₙ0.u ~ jₙ0,
         el.ϕₛn.u ~ ϕ̄ₙ,
         el.Δϕₙ.u ~ ne.U₀ + ηᵣ̅n - sei.ϕf_x,
 
-        ne.J.u ~  i_app/params.e.Lₙ/ne.aₖ - sei.j_sei_x - plating.j_stripping_x - cracking_n.j_sei_x, # Current density in the negative electrode
-        pe.J.u ~  -i_app/params.e.Lₚ/pe.aₖ, # Current density in the positive electrode
+        ne.J.u ~  i_app/Lₙ/ne.aₖ - sei.j_sei_x - plating.j_stripping_x - cracking_n.j_sei_x, # Current density in the negative electrode
+        pe.J.u ~  -i_app/Lₚ/pe.aₖ, # Current density in the positive electrode
 
         # # Ne sei reaction
         sei.J.u ~ ne.J.u, # Total current density for SEI potential
@@ -214,7 +221,7 @@ function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,1
         # sei.D_sol ~ D_sol,
 
         # # Li plating
-        plating.J.u ~ i_app/params.e.Lₙ/ne.aₖ,
+        plating.J.u ~ i_app/Lₙ/ne.aₖ,
         plating.T.u ~ T.u,
         plating.aₖ.u ~ ne.aₖ,
         [plating.Δϕₛ.u[i] ~ Δϕₙ_x for i in 1:Nn]...,
@@ -230,7 +237,7 @@ function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,1
         cracking_n.c_s_r.u ~ ne.c_r,
         cracking_n.c_s_surf.u ~ ne.c_surf,
 
-        cracking_p.J.u ~ -i_app/params.e.Lₚ/pe.aₖ,
+        cracking_p.J.u ~ -i_app/Lₚ/pe.aₖ,
         cracking_p.T.u ~ T.u,
         cracking_p.aₖ.u ~ pe.aₖ,
         [cracking_p.Δϕₛ.u[i] ~ ϕₚ[i] + el.ϕₑ[g.el.ixₚ[i]] for i in 1:Np]...,
@@ -251,28 +258,28 @@ function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,1
         Dt(pe.ϵₛ) ~ lam_p.j_lam + cathode_diss.j_diss,
         
         # Porosity (assumed constant)
-        [el.ϵ[i] ~ params.e.ϵₙ - ne.aₖ*(
-            sei.L_sei[i] - params.n.L_sei₀
+        [el.ϵ[i] ~ params["Negative electrode porosity"] - ne.aₖ*(
+            sei.L_sei[i] - params["Initial SEI thickness [m]"]
             + plating.L_plating[i] 
             + plating.L_dead[i]
              + cracking_n.L_sei[i]*(cracking_n.r_surf - 1)
             ) for i in g.el.ixₙ]...,
-        [el.ϵ[i] ~ params.e.ϵₛ for i in g.el.ixₛ]...,
-        [el.ϵ[i] ~ params.e.ϵₚ for i in g.el.ixₚ]...,
+        [el.ϵ[i] ~ params["Separator porosity"] for i in g.el.ixₛ]...,
+        [el.ϵ[i] ~ params["Positive electrode porosity"] for i in g.el.ixₚ]...,
 
-        Cₚ ~ pe.ϵₛ*params.e.Lₚ * A * params.p.c₊ * F / 3600,
-        Cₙ ~ ne.ϵₛ*params.e.Lₙ * A * params.n.c₊ * F / 3600,
+        Cₚ ~ pe.ϵₛ*Lₚ * A * params["Maximum concentration in positive electrode [mol.m-3]"] * F / 3600,
+        Cₙ ~ ne.ϵₛ*Lₙ * A * params["Maximum concentration in negative electrode [mol.m-3]"] * F / 3600,
 
         Q_loss ~ sei.Q_loss + plating.Q_loss + cracking_n.Q_sei + lam_n.Q_loss + lam_p.Q_loss,
 
         C_cell ~ Q - Q_loss,
-        C_pos ~ params.e.Lₚ*A*params.p.c₊*pe.ϵₛ*F/3600,
-        C_neg ~ params.e.Lₙ*A*params.n.c₊*ne.ϵₛ*F/3600,
+        C_pos ~ Lₚ*A*params["Maximum concentration in positive electrode [mol.m-3]"]*pe.ϵₛ*F/3600,
+        C_neg ~ Lₙ*A*params["Maximum concentration in negative electrode [mol.m-3]"]*ne.ϵₛ*F/3600,
         n_Li ~ sum(el.cₑ) + sum(ne.c) + sum(pe.c),
 
-        LAMₚ ~ (1- C_pos/(params.e.Lₚ*A*params.p.c₊*params.p.ϵₛ*F/3600))*100,
-        LAMₙ ~ (1- C_neg/(params.e.Lₙ*A*params.n.c₊*params.n.ϵₛ*F/3600))*100,
-        LLI ~ (1 - n_Li/(params.e.c₀*g.el.Nₜ + params.n.c₀*Nn + params.p.c₀*Np))*100,
+        LAMₚ ~ (1- C_pos/(Lₚ*A*params["Maximum concentration in positive electrode [mol.m-3]"]*params["Positive electrode active material volume fraction"]*F/3600))*100,
+        LAMₙ ~ (1- C_neg/(Lₙ*A*params["Maximum concentration in negative electrode [mol.m-3]"]*params["Negative electrode active material volume fraction"]*F/3600))*100,
+        LLI ~ (1 - n_Li/(params["Initial concentration in electrolyte [mol.m-3]"]*g.el.Nₜ + params["Initial concentration in negative electrode [mol.m-3]"]*Nn + params["Initial concentration in positive electrode [mol.m-3]"]*Np))*100,
 
         Dt(Q_Ah) ~ i/3600,
         Dt(Qt_Ah) ~ abs(i)/3600
@@ -282,8 +289,8 @@ function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,1
     # Event working
     events = [
         [
-            v ~ params.Vmin,
-            v ~ params.Vmax,
+            v ~ params["Lower voltage cut-off [V]"],
+            v ~ params["Upper voltage cut-off [V]"],
         ]=>(abort!,(;))
     ]
 
