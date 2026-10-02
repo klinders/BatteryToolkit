@@ -268,11 +268,10 @@ function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,1
         C_cell ~ Q - Q_loss,
         C_pos ~ params.e.Lₚ*A*params.p.c₊*pe.ϵₛ*F/3600,
         C_neg ~ params.e.Lₙ*A*params.n.c₊*ne.ϵₛ*F/3600,
-        n_Li ~ sum(el.cₑ) + sum(ne.c) + sum(pe.c),
 
-        LAMₚ ~ (1- C_pos/(params.e.Lₚ*A*params.p.c₊*params.p.ϵₛ*F/3600))*100,
-        LAMₙ ~ (1- C_neg/(params.e.Lₙ*A*params.n.c₊*params.n.ϵₛ*F/3600))*100,
-        LLI ~ (1 - n_Li/(params.e.c₀*g.el.Nₜ + params.n.c₀*Nn + params.p.c₀*Np))*100,
+        LAMₚ ~ (1- C_pos/(params.e.Lₚ*A*params.p.c₊*params.p.ϵₛ*F/3600)),
+        LAMₙ ~ (1- C_neg/(params.e.Lₙ*A*params.n.c₊*params.n.ϵₛ*F/3600)),
+        LLI ~ Q_loss/Q,
 
         Dt(Q_Ah) ~ i/3600,
         Dt(Qt_Ah) ~ abs(i)/3600
