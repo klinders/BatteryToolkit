@@ -12,6 +12,14 @@ include("ParameterSets/OKane2022.jl")
 include("ParameterSets/Ruihe2025.jl")
 
 export Chen2020, OKane2022, Ruihe2025, BatteryParameters
+=======
+include("ParameterSets/BrosaPlanella2023.jl")
+include("ParameterSets/Movahedi2024.jl")
+include("ParameterSets/Myself2026.jl")
+
+
+export Chen2020, OKane2022, BrosaPlanella2023, Movahedi2024, Myself2026, BatteryParameters
+>>>>>>> Stashed changes
 
 include("CellModels/SPMe/SPMe.jl")
 

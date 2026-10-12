@@ -33,6 +33,10 @@ The SPMe model implemented based on [MarquisEtAl2019](@citet) and [BrosaPlanella
 function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,10,10], :Nᵣ=>[10,10]), side_reactions=true)
     @parameters begin
         t # Time variable
+        # k_sei = 2.76e-18
+        # D_ec = 1.75e-19
+        # α = 0.5
+        # D_sol = 2.5e-22
     end
     Dt = Differential(t)
 
@@ -55,17 +59,17 @@ function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,1
     @named T = RealInput(guess=298.15)
 
     # @named Q = RealOutput()
-    @named pe = SolidParticle(params, g, d="Positive electrode")
-    @named ne = SolidParticle(params, g, d="Negative electrode")
-    @named el = Electrolyte(params, g, d=["Negative electrode", "Separator", "Positive electrode"])
-    @named sei = SEI.ECReactionLimitedSEI(params, g, d="Negative electrode")
-    @named plating = LithiumPlating.PartiallyReversiblePlating(params, g, d="Negative electrode")
-    @named cracking_n = ParticleCracking.SwellingAndCracking(params, g, d="Negative electrode")
-    @named cracking_p = ParticleCracking.SwellingOnly(params, g, d="Positive electrode")
+    @named pe = SolidParticle(p=params.p, g=g.pe)
+    @named ne = SolidParticle(p=params.n, g=g.ne)
+    @named el = Electrolyte(p=params.e, g=g.el)
+    @named sei = params.sei(p=params.n.side_reactions[1],s=params.n, V=params.e.Lₙ*A, g=g) # Assuming first side reaction is SEI
+    @named plating = params.plating(p=params.n.side_reactions[1],s=params.n, V=params.e.Lₙ*A, g=g) 
+    @named cracking_n = params.cracking_n(p=params.n.side_reactions[1], s=params.n, V=params.e.Lₙ*A, g=g)
+    @named cracking_p = params.cracking_p(p=params.n.side_reactions[1], s=params.p, V=params.e.Lₚ*A, g=g)
 
-    @named lam_n = LAM.StressDriven(params. g, d="Negative electrode")
-    @named lam_p = LAM.StressDriven(params, g, d="Positive electrode")
-    @named cathode_diss = CathodeDissolution.DiffusionCurrent(params, g, d="Positive electrode")
+    @named lam_n = params.lam_n(p=params.n.side_reactions[1], s=params.n, V=params.e.Lₙ*A, g=g)
+    @named lam_p = params.lam_p(p=params.n.side_reactions[1], s=params.p, V=params.e.Lₚ*A, g=g)
+    @named cathode_diss = params.dissolution(s=params.p, V=params.e.Lₚ*A, g=g)
 
     submodels = [p,n,T,pe,ne,el,sei,plating,cracking_n,cracking_p,lam_n,lam_p,cathode_diss]
     
@@ -212,13 +216,13 @@ function SPMe(; name="SPMe", params::BatteryParameters, Q=0, N=Dict(:Nₓ=>[10,1
         sei.T.u ~ T.u,
         sei.aₖ.u ~ ne.aₖ,
         [sei.Δϕₛ.u[i] ~ Δϕₙ_x for i in 1:Nn]...,
-        sei.k_sei ~ k_sei,
-        sei.D_ec ~ D_ec,
-        sei.α ~ α,
-        cracking_n.k_sei ~ k_sei,
-        cracking_n.D_ec ~ D_ec,
-        cracking_n.α ~ α,
-        # sei.D_sol ~ D_sol,
+        # sei.k_sei ~ k_sei,
+        # sei.D_ec ~ D_ec,
+        # sei.α ~ α,
+        # cracking_n.k_sei ~ k_sei,
+        # cracking_n.D_ec ~ D_ec,
+        # cracking_n.α ~ α,
+        # # sei.D_sol ~ D_sol,
 
         # # Li plating
         plating.J.u ~ i_app/Lₙ/ne.aₖ,

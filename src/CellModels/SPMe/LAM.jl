@@ -5,6 +5,39 @@ using BatteryToolkit
 using ModelingToolkitStandardLibrary.Blocks
 using ModelingToolkitStandardLibrary.Electrical
 
+
+function NoLAM(; name, p::BatteryToolkit.SideReactionParameters, s::BatteryToolkit.SolidParticleParameters, V, g)
+    
+    @parameters begin
+        t
+    end
+    
+    R = 8.314 # Universal gas constant
+    F = 96485 # Faraday's constant
+    N = g.el.Nx[1]
+    
+    @named σᵣ = RealInput()
+    @named σₜ = RealInput()
+    @named c_r = RealInput()
+
+    # Time derivative operator
+    Dt = Differential(t)
+    
+    @variables begin
+        j_lam(t)
+        lli(t) = 0
+        Q_loss(t)
+    end
+
+    eqns = [
+        j_lam ~ 0,
+        Dt(lli) ~ 0,
+        Q_loss ~ lli * F / 3600
+    ]
+
+    System(eqns,t; name=name,systems=[σᵣ, σₜ, c_r])
+end
+
 """
     NoLAM(; name, p::SideReactionParameters, s::SolidParticleParameters, g)
 

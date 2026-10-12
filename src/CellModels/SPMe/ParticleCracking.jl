@@ -24,7 +24,7 @@ Use this when cracking effects are negligible or you want to exclude them from t
 - `j_sei`: SEI current density (always 0)
 - `ϕf`: Film potential (always 0)
 """
-function NoMechanics(; name, p::BatteryToolkit.SideReactionParameters, s::BatteryToolkit.SolidParticleParameters, g)
+function NoMechanics(; name, p::BatteryToolkit.SideReactionParameters, s::BatteryToolkit.SolidParticleParameters,V ,g)
     
     @parameters begin
         t
@@ -35,53 +35,82 @@ function NoMechanics(; name, p::BatteryToolkit.SideReactionParameters, s::Batter
     N = g.el.Nx[1]
 
     @named J = RealInput()
-    @named T = RealInput(guess=298.15)
+    @named T = RealInput()
     @named Δϕₛ = RealInputArray(nin=N)
     @named aₖ = RealInput(guess=s.aₖ)
+    @named c_s_r = RealInput()
+    @named c_s_surf = RealInput()
+
 
     # Time derivative operator
     Dt = Differential(t)
     
-    @variables begin
-        # Mechanics
-        (a_cr(t))[1:N] = fill(0,N)
 
+    
+    @variables begin
+        l_cr(t)
+        r_surf(t)
+        a_cr(t)
+        σₜ(t)
+        σᵣ(t)
+        u_d(t)
+        
         # SEI concentration
         (c_sei(t))[1:N] = fill(0,N)
         (j_sei(t))[1:N]
         (ϕf(t))[1:N]
-        (L_sei(t))[1:N] = fill(0,N)
+        (L_sei(t))[1:N]
 
+        l_cr_x(t)
+        r_surf_x(t)
         a_cr_x(t)
+        σₜ_x(t)
+        σᵣ_x(t)
+        u_d_x(t)
+
         c_sei_x(t)
         L_sei_x(t)
         j_sei_x(t)
         ϕf_x(t)
-
+        Q_sei(t)
     end
 
-  
+    # dK_SIF = ifelse(σₜ >= 0, σₜ*b_cr* sqrt(pi*l_cr), 0)
+
     eqns = [
-        [Dt(a_cr[i]) ~ 0 for i in 1:N]...,
+
+        # Cracking
+        l_cr ~ 0,
+        r_surf ~ 1,
+        a_cr ~ 0,
+        σₜ ~ 0,
+        σᵣ ~ 0,
+        u_d ~ 0,
 
         # Scott Marquis thesis (eq. 5.92)
         # Exchange current density
         [j_sei[i] ~ 0 for i in 1:N]...,
 
         [Dt(c_sei[i]) ~ 0 for i in 1:N]...,
-        [L_sei[i] ~ c_sei[i]*p.V̄/aₖ.u for i in 1:N]...,
+        [L_sei[i] ~ 0 for i in 1:N]...,
 
-        [ϕf[i] ~ -J.u*L_sei[i]*p.R for i in 1:N]...,
-        a_cr_x ~ sum(a_cr)/N,
+        [ϕf[i] ~ 0 for i in 1:N]...,
+
+        l_cr_x ~ l_cr,
+        r_surf_x ~ r_surf,
+        a_cr_x ~ a_cr,
+        σₜ_x ~ σₜ,
+        σᵣ_x ~ σᵣ,
+        u_d_x ~ u_d,
+
         L_sei_x ~ sum(L_sei)/N,
         c_sei_x ~ sum(c_sei)/N,
         j_sei_x ~ sum(j_sei)/N,
         ϕf_x ~ sum(ϕf)/N,
         Q_sei ~ 0,
-
     ]
 
-    System(eqns,t; name=name,systems=[J, T, Δϕₛ, aₖ])
+    System(eqns,t; name=name,systems=[J, T, Δϕₛ, aₖ, c_s_r, c_s_surf])
 end
 
 

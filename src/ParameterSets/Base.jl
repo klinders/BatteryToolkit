@@ -77,6 +77,9 @@ Base.@kwdef mutable struct SideReactionParameters
     c_sol           # Solvent concentration in mol/m^3
     E_sei           # Activation energy for SEI growth in J/mol
     T_ref           # Reference temperature in K
+    α_plating       # Li plating transfer coefficient
+    k_plating       # Li plating reaction rate
+    V_plating       # Partial molar volume of lithium [m3.mol-1]
 end
 
 """
@@ -115,7 +118,7 @@ Base.@kwdef mutable struct SolidParticleParameters
     β_LAM # LAM rate constant
     m_LAM # LAM stress exponent
     stress_critical # Critical stress for LAM
-
+    
     side_reactions::Vector{SideReactionParameters} = SideReactionParameters[]
 end
 
@@ -156,4 +159,12 @@ Base.@kwdef mutable struct BatteryParameters
 
     Vmin
     Vmax
+
+    sei
+    plating
+    cracking_n
+    cracking_p
+    lam_n
+    lam_p
+    dissolution
 end

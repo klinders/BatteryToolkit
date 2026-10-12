@@ -27,7 +27,6 @@ sys = SPMe(params=params, N=10)  # 10 FVM nodes per domain
 See O'Kane et al. 2022 for detailed electrochemical characterization and model validation.
 """
 function OKane2022()
-
     sei_parameters = SideReactionParameters(
         name = :sei,
         k = 1.0e-10, # Reaction rate
@@ -44,8 +43,11 @@ function OKane2022()
         c = (el) -> nothing, # Concentration dependence function
         D_sol = 2.5e-22, # Solvent diffusivity in m^2/s
         c_sol = 2636.0, # Solvent concentration in mol/m^3
-        E_sei = 5000.0, # Activation energy for SEI growth in J/mol
-        T_ref = 298.15 # Reference temperature in K
+        E_sei = 38000.0, # Activation energy for SEI growth in J/mol
+        T_ref = 298.15, # Reference temperature in K
+        α_plating = 0.65, # Li plating transfer coefficient
+        k_plating = 1e-9,
+        V_plating = 1.3e-05 # Partial molar volume of lithium [m3.mol-1]
     )
 
     n = SolidParticleParameters(
@@ -97,8 +99,8 @@ function OKane2022()
         Lₚ= 75.6e-6, # Length of the electrode in m
         Lₛ= 12e-6, # Length of the separator in m
         Lₙ= 85.2e-6, # Length of the negative electrode in m
-        Dₑ= (c,T) -> (8.794e−11 * (c/1000)^2 − 3.972e−10 * (c/1000) + 4.862e−10)*exp(20000/8.314*(1/298.15-1/T)), # Diffusivity in m^2*s^-1
-        σₑ= (c,T) -> (0.1297 * (c/1000)^3 − 2.51*(c/1000)^1.5 + 3.329*(c/1000))*exp(20000/8.314*(1/298.15 - 1/T)), # Conductivity in S*m^-1
+        Dₑ= (c,T) -> (8.794e−11 * (c/1000)^2 − 3.972e−10 * (c/1000) + 4.862e−10)*exp(17000/8.314*(1/298.15-1/T)), # Diffusivity in m^2*s^-1
+        σₑ= (c,T) -> (0.1297 * (c/1000)^3 − 2.51*(c/1000)^1.5 + 3.329*(c/1000))*exp(17000/8.314*(1/298.15 - 1/T)), # Conductivity in S*m^-1
         c₀= 1000.0, # Initial electrolyte concentration in mol*m^-3
         cₜ= 1000.0, # Typical Electrolyte concentration in mol*m^-3
         t₊= c->0.2594, # transer number
@@ -113,7 +115,6 @@ function OKane2022()
         bₙ = 1.5,
     )
 
-
     return BatteryParameters(
         p = p,
         n = n,
@@ -123,6 +124,13 @@ function OKane2022()
         n_el = 1,
         Q₀ = 5, # Original battery capacity in Ah
         Vmin = 1.2,
-        Vmax = 4.5
+        Vmax = 4.5,
+        sei = SEI.SolventDiffusionLimitedSEI,
+        plating = LithiumPlating.PartiallyReversiblePlating,
+        cracking_n = ParticleCracking.SwellingAndCracking,
+        cracking_p = ParticleCracking.SwellingOnly,
+        lam_n = LAM.StressDriven,
+        lam_p = LAM.StressDriven,
+        dissolution = CathodeDissolution.NoDiffusion
     )
 end
